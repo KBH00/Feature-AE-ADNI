@@ -199,7 +199,8 @@ class FeatureReconstructor(BaseModel):
 
         self.classifier = nn.Sequential(
                     nn.Flatten(),
-                    nn.Linear(config.hidden_dims[-1], 2)  # Binary classification (Normal/Anomalous)
+                    nn.Linear(196608, 512),
+                    nn.Linear(256, 2)  # Binary classification (Normal/Anomalous)
                 )
         
         if config.loss_fn == 'ssim':
@@ -212,7 +213,8 @@ class FeatureReconstructor(BaseModel):
     def forward(self, x: Tensor):
         with torch.no_grad():
             feats = self.extractor(x)
-        return feats, self.ae(feats), self.classifier(feats)
+        rec = self.ae(feats)
+        return feats, rec, self.classifier(rec)
 
     def get_feats(self, x: Tensor) -> Tensor:
         return self.extractor(x)
