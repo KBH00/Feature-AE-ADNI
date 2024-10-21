@@ -150,7 +150,7 @@ def find_nii_directories(base_dir, csv_path, modality="FLAIR"):
                 else:
                     anomal_directories.append(os.path.join(root, file))
                     break
-    print(len(nii_directories))
+    print(len(nii_directories), len(anomal_directories))
     return nii_directories, anomal_directories
 
 from typing import List, Tuple, Sequence
