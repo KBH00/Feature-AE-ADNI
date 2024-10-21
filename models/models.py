@@ -200,7 +200,7 @@ class FeatureReconstructor(BaseModel):
         self.classifier = nn.Sequential(
                     nn.Flatten(),
                     nn.Linear(196608, 512),
-                    nn.Linear(256, 2)  # Binary classification (Normal/Anomalous)
+                    nn.Linear(512, 2)  # Binary classification (Normal/Anomalous)
                 )
         
         if config.loss_fn == 'ssim':
