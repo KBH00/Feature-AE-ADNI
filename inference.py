@@ -10,9 +10,10 @@ import os
 
 #D:/Download/Downloads/nii
 #D:/VascularData/data/nii
+#D:/Download/abnormal.csv
 def parse_args():
     parser = argparse.ArgumentParser(description='Train Feature Autoencoder on 3D DICOM Images')
-    parser.add_argument('--csv_path', type=str, default="C:/Users/kbh/Desktop/CNI/test/updated_subject_paths.csv", help='Path to the CSV file containing DICOM paths and labels')
+    parser.add_argument('--csv_path', type=str, default="D:/Download/abnormal.csv", help='Path to the CSV file containing DICOM paths and labels')
     parser.add_argument('--train_base_dir', type=str, default="D:/Download/Downloads/nii", help='Base directory for training DICOM files')
     parser.add_argument('--modality', type=str, default="FLAIR", help='Data modality')
     parser.add_argument('--batch_size', type=int, default=32 , help='Batch size for DataLoaders')
@@ -50,6 +51,7 @@ def main():
 
     train_loader, validation_loader, test_loader = get_dataloaders(
         train_base_dir=args.train_base_dir,
+        csv_path=args.csv_path,
         modality=args.modality,
         batch_size=args.batch_size,
         transform=None,  

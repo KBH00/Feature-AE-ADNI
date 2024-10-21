@@ -49,18 +49,20 @@ class TrainDataset(Dataset):
     Training dataset. No anomalies, no segmentation maps.
     """
 
-    def __init__(self, imgs: np.ndarray):
+    def __init__(self, imgs: np.ndarray, labels: np.ndarray):
         """
         Args:
             imgs (np.ndarray): Training slices
+            labels (np.ndarray): Labels corresponding to each image (0 or 1)
         """
         self.imgs = imgs
+        self.labels = labels
 
     def __len__(self):
         return len(self.imgs)
 
     def __getitem__(self, idx):
-        return self.imgs[idx]
+        return self.imgs[idx], self.labels[idx]
 
 class AugmentedTrainDataset(Dataset):
     """
@@ -214,8 +216,16 @@ def get_dataloaders(train_base_dir, csv_path, modality, batch_size=4, transform=
 
 
     train_imgs = np.concatenate(load_images(train_directories, config))
+    anomalous_imgs = np.concatenate(load_images(anomal_directories, config))
+
+    normal_labels = np.zeros(len(train_imgs), dtype=np.int64)
+    anomalous_labels = np.ones(len(anomalous_imgs), dtype=np.int64)
+    train_imgs = np.concatenate([train_imgs, anomalous_imgs], axis=0)
+    train_labels = np.concatenate([normal_labels, anomalous_labels], axis=0)
+
     #train_dataset = Nifti3DDataset(train_directories, transform=transform, config=config)
-    train_dataset =TrainDataset(train_imgs)
+    #train_dataset =TrainDataset(train_imgs)
+    train_dataset = TrainDataset(train_imgs, train_labels)
 
     total_size = len(train_dataset)
     validation_size = int(total_size * validation_split)

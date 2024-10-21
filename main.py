@@ -77,81 +77,98 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         model.train()
-        running_loss = 0.0
-        for batch_idx, volumes in enumerate(train_loader):
+        running_rec_loss = 0.0
+        running_cls_loss = 0.0
+
+        for batch_idx, (volumes, labels) in enumerate(train_loader):
             optimizer.zero_grad()
             volumes = volumes.to(args.device)  # Shape: (B, 1, H, W)
-            #print(volumes.shape)
-            #visualize_volume(volumes, num_slices=5)
-            
+            labels = labels.to(args.device)
 
-            # B, H, W, D = volumes.shape
-            # volumes_slices = volumes.view(B*D, 1, H, W)  # Shape: (B*D, 1, H, W)
-            # print(volumes_slices.shape)
             # Forward pass
-            loss_dict = model.loss(volumes)
-            loss = loss_dict['rec_loss']
+            loss_dict = model.loss(volumes, labels)
 
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # Combine reconstruction and classification loss
+            total_loss = loss_dict['rec_loss'] + loss_dict['cls_loss']
+
+            total_loss.backward()
             optimizer.step()
 
-            running_loss += loss.item()
+            running_rec_loss += loss_dict['rec_loss'].item()
+            running_cls_loss += loss_dict['cls_loss'].item()
 
             if (batch_idx + 1) % 10 == 0:
-                print(f"Epoch [{epoch}/{args.epochs}], Step [{batch_idx + 1}/{len(train_loader)}], Loss: {loss.item():.4f}")
+                print(f"Epoch [{epoch}/{args.epochs}], Step [{batch_idx + 1}/{len(train_loader)}], "
+                    f"Reconstruction Loss: {loss_dict['rec_loss']:.4f}, "
+                    f"Classification Loss: {loss_dict['cls_loss']:.4f}")
 
-        epoch_loss = running_loss / len(train_loader)
-        print(f"Epoch [{epoch}/{args.epochs}], Average Loss: {epoch_loss:.4f}")
+        # Average loss per epoch
+        avg_rec_loss = running_rec_loss / len(train_loader)
+        avg_cls_loss = running_cls_loss / len(train_loader)
+        print(f"Epoch [{epoch}/{args.epochs}], Avg Reconstruction Loss: {avg_rec_loss:.4f}, "
+            f"Avg Classification Loss: {avg_cls_loss:.4f}")
 
+        # Validation phase
         model.eval()
-        val_loss = 0.0
+        val_rec_loss = 0.0
+        val_cls_loss = 0.0
+
         with torch.no_grad():
-            for volumes in validation_loader:
+            for volumes, labels in validation_loader:
                 volumes = volumes.to(args.device)
-                #B, C, D, H, W = volumes.shape
-                #volumes_slices = volumes.view(B * D, C, H, W)
-                #anomaly_map, anomaly_score = model.predict_anomaly(volumes)
+                labels = labels.to(args.device)
 
-                loss_dict = model.loss(volumes)
-                loss = loss_dict['rec_loss']
-                val_loss += loss.item()
-                #plot_anomaly_map_with_original(volumes, anomaly_map, slice_idx=0)
+                loss_dict = model.loss(volumes, labels)
 
+                val_rec_loss += loss_dict['rec_loss'].item()
+                val_cls_loss += loss_dict['cls_loss'].item()
 
-        val_loss /= len(validation_loader)
-        print(f"Validation Loss: {val_loss:.4f}")
+        val_rec_loss /= len(validation_loader)
+        val_cls_loss /= len(validation_loader)
+
+        print(f"Validation - Reconstruction Loss: {val_rec_loss:.4f}, Classification Loss: {val_cls_loss:.4f}")
 
         scheduler.step()
 
+        # Save the best model based on validation loss
+        val_loss = val_rec_loss + val_cls_loss
         if val_loss < best_val_loss:
-            best_val_loss = val_loss  
+            best_val_loss = val_loss
             os.makedirs(args.save_dir, exist_ok=True)
             best_model_path = os.path.join(
-                args.save_dir, 
+                args.save_dir,
                 f"best_model_epoch_{epoch}_batchsize_{args.batch_size}_lr_{args.lr}.pth"
             )
             model.save(config, f"best_model.pth", directory=args.save_dir)
             print(f"New best model saved to {best_model_path}")
 
+
     model.eval()
-    test_loss = 0.0
+    test_rec_loss = 0.0
+    test_cls_loss = 0.0
+    correct = 0
+    total = 0
+
     with torch.no_grad():
-        for volumes in test_loader:
+        for volumes, labels in test_loader:
             volumes = volumes.to(args.device)
-            # B, C, D, H, W = volumes.shape
-            # volumes_slices = volumes.view(B * D, C, H, W)
+            labels = labels.to(args.device)
 
-            loss_dict = model.loss(volumes)
-            loss = loss_dict['rec_loss']
-            test_loss += loss.item()
+            loss_dict = model.loss(volumes, labels)
 
-    test_loss /= len(test_loader)
-    print(f"Test Loss: {test_loss:.4f}")
+            test_rec_loss += loss_dict['rec_loss'].item()
+            test_cls_loss += loss_dict['cls_loss'].item()
 
-    final_model_path = os.path.join(args.save_dir, "model_final.pth")
-    model.save(config, "model_final.pth", directory=args.save_dir)
-    print(f"Final model saved to {final_model_path}")
+            _, predicted = torch.max(loss_dict['logits'], 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+    test_rec_loss /= len(test_loader)
+    test_cls_loss /= len(test_loader)
+    accuracy = 100 * correct / total
+
+    print(f"Test - Reconstruction Loss: {test_rec_loss:.4f}, Classification Loss: {test_cls_loss:.4f}, Accuracy: {accuracy:.2f}%")
+
 
 if __name__ == '__main__':
     main()
