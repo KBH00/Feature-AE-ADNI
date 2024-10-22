@@ -203,10 +203,25 @@ class DiffusionModel(nn.Module):
             sampling_timesteps=250  # Number of steps during sampling
         )
 
-    def forward(self, x: Tensor):
-        # The diffusion model expects an input and will generate the output after diffusion steps
-        noise = torch.randn_like(x)  # Add noise to the input
-        return self.diffusion(noise)
+    def forward(self, x_clean: Tensor):
+        noise = torch.randn_like(x_clean)  # Generate random noise
+        x_noisy = x_clean + noise  # Add noise to the clean input
+        return x_noisy, self.diffusion(x_noisy)  # Return both noisy and denoised images
+
+def dsm_loss(x_noisy: Tensor, x_clean: Tensor, model_output: Tensor, beta: float = 1.0):
+    """
+    Denoising Score Matching Loss.
+    Args:
+        x_noisy (Tensor): Noisy input
+        x_clean (Tensor): Clean ground truth input
+        model_output (Tensor): Output of the diffusion model
+        beta (float): Weighting factor for the loss
+    """
+    # The model should predict the clean input (x_clean) from the noisy input (x_noisy)
+    return beta * F.mse_loss(model_output, x_clean)
+
+
+import torch.nn.functional as F
 
 class FeatureReconstructor(BaseModel):
     def __init__(self, config):
@@ -223,52 +238,51 @@ class FeatureReconstructor(BaseModel):
             self.loss_fn = SSIMLoss(window_size=5, size_average=False)
         elif config.loss_fn == 'mse':
             self.loss_fn = nn.MSELoss(reduction='none')
+        elif config.loss_fn == 'dsm':
+            self.loss_fn = dsm_loss  # Use DSM loss here
         else:
             raise ValueError(f"Unknown loss function: {config.loss_fn}")
 
     def forward(self, x: Tensor):
         with torch.no_grad():
-            feats = self.extractor(x)
-        return feats, self.ae(feats)
-
-    def get_feats(self, x: Tensor) -> Tensor:
-        return self.extractor(x)
-
-    def get_rec(self, feats: Tensor) -> Tensor:
-        return self.ae(feats)
-
-    def loss(self, x: Tensor, labels):
-        feats, rec = self(x)
-        rec_loss = self.loss_fn(rec, feats).mean()
-        #criterion = nn.CrossEntropyLoss()
-        #cls_loss = criterion(logits, labels) ##There is no logits in this whole code
-        # return {
-        #     'rec_loss': rec_loss,
-        #     'cls_loss': cls_loss
-        # }
-        return {'rec_loss' : rec_loss}
+            feats = self.extractor(x)  # Extract high-level features
+        x_noisy, x_denoised = self.ae(feats)  # Get noisy and denoised features
+        return feats, x_noisy, x_denoised
 
     def predict_anomaly(self, x: Tensor):
-        """Returns per image anomaly maps and anomaly scores"""
-        feats, rec = self(x)
+        """
+        Generate anomaly map and anomaly score based on the difference between 
+        noisy input and the model's reconstruction.
+        Args:
+            x (Tensor): Input tensor of shape [batch_size, channels, height, width]
+        Returns:
+            anomaly_map (Tensor): The anomaly map highlighting pixel-wise differences.
+            anomaly_score (Tensor): A single score per image representing the overall anomaly.
+        """
+        # Step 1: Forward pass to get the noisy input and denoised output
+        feats, x_noisy, x_denoised = self(x)
 
-        anomaly_map = self.loss_fn(rec, feats).mean(1, keepdim=True)
-        anomaly_map = F.interpolate(anomaly_map, x.shape[-2:], mode='bilinear',
-                                    align_corners=True)
+        # Step 2: Calculate the anomaly map (pixel-wise differences between noisy and denoised)
+        anomaly_map = F.mse_loss(x_denoised, feats, reduction='none').mean(1, keepdim=True)
+        
+        # Step 3: Interpolate the anomaly map to match the original input size
+        anomaly_map = F.interpolate(anomaly_map, size=x.shape[-2:], mode='bilinear', align_corners=True)
 
-        # Anomaly score only where object in the image, i.e. at x > 0
+        # Step 4: Calculate anomaly score for each image
         anomaly_score = []
         for i in range(x.shape[0]):
-            roi = anomaly_map[i][x[i] > 0]
+            roi = anomaly_map[i][x[i] > 0]  # Only consider regions where there is actual input data
             if roi.numel() == 0:
                 anomaly_score.append(torch.tensor(0.0, device=x.device))
                 continue
-            roi = roi[roi > torch.quantile(roi, 0.9)]
+            # Calculate the mean anomaly score over the regions with high differences
+            roi = roi[roi > torch.quantile(roi, 0.9)]  # Top 10% quantile of anomaly regions
             if roi.numel() == 0:
                 anomaly_score.append(torch.tensor(0.0, device=x.device))
             else:
-                anomaly_score.append(roi.mean())
+                anomaly_score.append(roi.mean())  # Average anomaly score in the top 10% quantile
         anomaly_score = torch.stack(anomaly_score)
+
         return anomaly_map, anomaly_score
 
 if __name__ == '__main__':
