@@ -1,4 +1,4 @@
-name: fae-vsc
+name: fae-adni
 channels:
   - pytorch
   - anaconda
