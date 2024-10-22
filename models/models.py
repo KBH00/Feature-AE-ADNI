@@ -186,6 +186,28 @@ class FeatureAutoencoder(nn.Module):
         return rec
 
 
+class DiffusionModel(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        
+        self.model = Unet(
+            dim=config.image_size,  # Dimension size, can vary based on your dataset
+            channels=config.in_channels,  # Input channels (e.g. 1 for grayscale MRI)
+            dim_mults=(1, 2, 4)  # Scaling factors for depth
+        )
+        
+        self.diffusion = GaussianDiffusion(
+            self.model,
+            image_size=config.image_size,
+            timesteps=1000,  # Number of diffusion steps
+            sampling_timesteps=250  # Number of steps during sampling
+        )
+
+    def forward(self, x: Tensor):
+        # The diffusion model expects an input and will generate the output after diffusion steps
+        noise = torch.randn_like(x)  # Add noise to the input
+        return self.diffusion(noise)
+
 class FeatureReconstructor(BaseModel):
     def __init__(self, config):
         super().__init__()
@@ -195,13 +217,7 @@ class FeatureReconstructor(BaseModel):
                                    pretrained=not config.random_extractor)
 
         config.in_channels = self.extractor.c_feats
-        self.ae = FeatureAutoencoder(config)
-
-        self.classifier = nn.Sequential(
-                    nn.Flatten(),
-                    nn.Linear(196608, 512),
-                    nn.Linear(512, 2)  # Binary classification (Normal/Anomalous)
-                )
+        self.ae = DiffusionModel(config)
         
         if config.loss_fn == 'ssim':
             self.loss_fn = SSIMLoss(window_size=5, size_average=False)
@@ -213,8 +229,7 @@ class FeatureReconstructor(BaseModel):
     def forward(self, x: Tensor):
         with torch.no_grad():
             feats = self.extractor(x)
-        rec = self.ae(feats)
-        return feats, rec, self.classifier(rec)
+        return feats, self.ae(feats)
 
     def get_feats(self, x: Tensor) -> Tensor:
         return self.extractor(x)
@@ -223,14 +238,15 @@ class FeatureReconstructor(BaseModel):
         return self.ae(feats)
 
     def loss(self, x: Tensor, labels):
-        feats, rec, logits = self(x)
+        feats, rec = self(x)
         rec_loss = self.loss_fn(rec, feats).mean()
-        criterion = nn.CrossEntropyLoss()
-        cls_loss = criterion(logits, labels) ##There is no logits in this whole code
-        return {
-            'rec_loss': rec_loss,
-            'cls_loss': cls_loss
-        }
+        #criterion = nn.CrossEntropyLoss()
+        #cls_loss = criterion(logits, labels) ##There is no logits in this whole code
+        # return {
+        #     'rec_loss': rec_loss,
+        #     'cls_loss': cls_loss
+        # }
+        return {'rec_loss' : rec_loss}
 
     def predict_anomaly(self, x: Tensor):
         """Returns per image anomaly maps and anomaly scores"""
@@ -254,7 +270,6 @@ class FeatureReconstructor(BaseModel):
                 anomaly_score.append(roi.mean())
         anomaly_score = torch.stack(anomaly_score)
         return anomaly_map, anomaly_score
-
 
 if __name__ == '__main__':
     # Config
